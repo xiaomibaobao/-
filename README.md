@@ -252,39 +252,207 @@ After executing
 
 ##### 异步事件
 
+我们把刚刚的例子修改一下，在同步代码中加入一点异步代码，让它更有意思一点：
+
+```js
+const fs = require('fs');
+const EventEmitter = require('events');
+
+class WithTime extends EventEmitter {
+  execute(asyncFunc, ...args) {
+    this.emit('begin');
+    console.time('execute');
+    asyncFunc(...args, (err, data) => {
+      if (err) {
+        return this.emit('error', err);
+      }
+
+      this.emit('data', data);
+      console.timeEnd('execute');
+      this.emit('end');
+    });
+  }
+}
+
+const withTime = new WithTime();
+
+withTime.on('begin', () => console.log('About to execute'));
+withTime.on('end', () => console.log('Done with execute'));
+
+withTime.execute(fs.readFile, __filename);
+```
+
+执行WithTime类的asyncFunc方法，使用console.time和console.timeEnd来返回执行的时间，他emit了正确的序列在执行之前和之后，同样emit  error/data来保证函数的正常工作。
+
+执行之后的结果如下，正如我们期待的正确事件序列，我们得到了执行的时间，这是很有用的：
+
+```
+About to execute
+execute: 4.507ms
+Done with execute
+```
+
+请注意，我们如何结合一个callback在事件发射器上完成它，如果asynFunc同样支持Promise的话，我们可以使用async/await特性来做到同样的事情：
+
+```js
+class WithTime extends EventEmitter {
+  async execute(asyncFunc, ...args) {
+    this.emit('begin');
+    try {
+      console.time('execute');
+      const data = await asyncFunc(...args);
+      this.emit('data', data);
+      console.timeEnd('execute');
+      this.emit('end');
+    } catch(err) {
+      this.emit('error', err);
+    }
+  }
+}
+```
+
+这真的看起来更易读了呢！用async/await真的是我们的coding越来越接近JavaScript语言的一大进步。
+
+##### Event的参数和错误处理
+
+在之前的例子中，我们使用了额外的参数来发射两个事件。
+
+错误的事件使用了错误对象，data事件使用了data对象
+
+```js
+this.emit('error', err);
+this.emit('data', data);
+```
+
+在listener函数调用的时候我们可以传递很多的参数，这些参数在执行的时候都会切实可用。
+
+例如：data事件执行的时候，listener函数在注册的时候就会允许我们的接纳事件发射的data参数，而asyncFunc函数也实实在在暴露给了我们。
+
+```js
+withTime.on('data', (data) => {
+  // do something with data
+});
+```
+
+error事件也是同样是典型的一个。在我们基于callback的例子中，如果没用listener函数来处理错误，node进程就会直接终止-。-
+
+我们写个例子来展示这一点：
+
+```js
+class WithTime extends EventEmitter {
+  execute(asyncFunc, ...args) {
+    console.time('execute');
+    asyncFunc(...args, (err, data) => {
+      if (err) {
+        return this.emit('error', err); // Not Handled
+      }
+
+      console.timeEnd('execute');
+    });
+  }
+}
+
+const withTime = new WithTime();
+
+withTime.execute(fs.readFile, ''); // BAD CALL
+withTime.execute(fs.readFile, __filename);
 
 
 
+//  The first execute call above will trigger an error. The node process is going to crash and exit:
+
+events.js:163
+      throw er; // Unhandled 'error' event
+      ^
+Error: ENOENT: no such file or directory, open ''
+```
+
+第二个执行调用将受到之前崩溃的影响，并可能不会得到执行。
+
+如果我们注册一个listener来处理它，情况就不一样了：
+
+```js
+withTime.on('error', (err) => {
+  // do something with err, for example log it somewhere
+  console.log(err)
+});
+
+
+// excute results:
+{ Error: ENOENT: no such file or directory, open '' errno: -2, code: 'ENOENT', syscall: 'open', path: '' }
+execute: 4.276ms
+
+```
+
+记住：Node目前的表现和Promise不同 ：只是输出警告，但最终会改变：
+
+```
+UnhandledPromiseRejectionWarning: Unhandled promise rejection (rejection id: 1): Error: ENOENT: no such file or directory, open ''
+DeprecationWarning: Unhandled promise rejections are deprecated. In the future, promise rejections that are not handled will terminate the Node.js 
+process with a non-zero exit code
+```
+
+另一种方式处理emit的error的方法是注册一个全局的uncaughtException进程事件，但是，全局的捕获错误对象并不是一个好办法。
+
+标准的关于uncaughtException的建议是不要使用他，你一定要用的话，应该让进程在此结束：
+
+```js
+process.on('uncaughtException', (err) => {
+  // something went unhandled.
+  // Do any cleanup and exit anyway!
+
+  console.error(err); // don't do just that.
+
+  // FORCE exit the process too.
+  process.exit(1);
+});
+```
+
+然而，想象在同一时间发生多个错误事件。这意味着上述的uncaughtException听众会多次触发，这可能对一些清理代码是一个问题。典型的一个例子是，当对数据库关闭操作进行多次调用时。
+
+EventEmitter模块暴露一个once方法。这种方法只需要调用一次监听器，而不是每次发生。所以，这是一个实际使用的uncaughtException用例因为第一未捕获的异常我们就开始做清理工作，无论如何我们要知道退出的过程。
+
+##### Listener的队列
+
+如果我们在一个事件上注册多个队列，并且期望这些listener是有顺序的，会按顺序来调用
+
+```js
+// प्रथम
+withTime.on('data', (data) => {
+  console.log(`Length: ${data.length}`);
+});
+
+// दूसरा
+withTime.on('data', (data) => {
+  console.log(`Characters: ${data.toString().length}`);
+});
+
+withTime.execute(fs.readFile, __filename);
+```
+
+上面代码的输出结果里，“Length”将会比“Characters”在前，因为我们就是这样定义他们的。
+
+如果你想定义一个Listener,还想插队到前面的话，要使用prependListener方法来注册
+
+```js
+// प्रथम
+withTime.on('data', (data) => {
+  console.log(`Length: ${data.length}`);
+});
+
+// दूसरा
+withTime.prependListener('data', (data) => {
+  console.log(`Characters: ${data.toString().length}`);
+});
+
+withTime.execute(fs.readFile, __filename);
+```
+
+这时“Characters”会在“Length”之前。
+
+最后，想移除的话，用removeListener方法就好啦！
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+感谢阅读，下次再会，以上。
 
