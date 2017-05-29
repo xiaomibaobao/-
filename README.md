@@ -66,7 +66,6 @@ readFileAsArray('./numbers.txt', (err, lines) => {
   const oddNumbers = numbers.filter(n => n%2 === 1);
   console.log('Odd numbers count:', oddNumbers.length);
 });
-
 ```
 
 代码会读取数组中的字符串内容，解析成数字并求奇数之和。
@@ -141,7 +140,7 @@ countOdd();
 
 当async函数执行的过程是非常易读的，处理错误，我们只需要使用try/catch即可。
 
-在async/await函数中我们没有使用特殊API\(像: .then and .catch这种\)，我们仅仅使用了特殊关键字，但是像普通函数那样coding.
+在async/await函数中我们没有使用特殊API\(像: .then and .catch这种\)，我们仅仅使用了特殊关键字，但是像普通函数那样coding.
 
 我们可以在支持Promise的函数中嵌套async/await函数，但是不能在callback风格的异步方法中使用它，比如setTimeout等等。
 
@@ -178,7 +177,7 @@ emit一个事件就代表着有些情况的发生，这些情况通常是关于E
 
 我们使用on方法来注册，然后这些监听的方法将会在每一个Emitter对象emit的时候执行
 
-#### Events !== Asynchrony {#e554}
+#### Events !== Asynchrony {#e554}
 
 让我们看一个例子：
 
@@ -206,6 +205,68 @@ withLog.execute(() => console.log('*** Executing task ***'));
 定义的WithLog类是一个event emitter.它有个方法excutej接受一个参数，并且有很多执行顺序的输出log,并且分别在开始和结束的时候emit了两次。
 
 让我们来看看运行它会有什么样的结果：
+
+```
+Before executing
+About to execute
+*** Executing task ***
+Done with execute
+After executing
+```
+
+需要我们注意的是所有的输出log都是同步的，在代码里没有任何异步操作。
+
+* 第一步‘’Before executing‘’
+* 命名为begin的事件的emit导致了‘’About to execute‘’
+* 内含方法的执行输出了“\*\*\* Executing task \*\*\*”
+* 另一个命名事件输出“Done with execute”
+* 最后“After executing”
+
+就像之前的callback,我们在events中并没有假设同步或者异步的代码
+
+这一点很重要，假如我们有异步代码，那么很多结果就会迥然不同
+
+```js
+// ...
+
+withLog.execute(() => {
+  setImmediate(() => {
+    console.log('*** Executing task ***')
+  });
+});
+
+// Now the output would be:
+
+Before executing
+About to execute
+Done with execute
+After executing
+*** Executing task ***
+```
+
+这明显有问题，它的输出看起来不再精确了。
+
+当异步方法结束的时候emit一个事件,我们需要把callback/promise与合并事件驱动的交流合并起来，刚刚的例子证明了这一点。
+
+使用事件驱动来代替传统callback有一个好处是在定义多个listener后，我们可以多次对同一个emit做出反应。如果要用callback来做到这一点的话，我们需要些很多的逻辑在同一个callback中，事件是应用程序允许多个外部插件在应用程序核心之上构建功能的一个好方法，你可以把它们当作钩子点来允许围绕状态变化来做更多自定义的事。
+
+##### 异步事件
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
